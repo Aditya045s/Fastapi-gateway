@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  JWT_SECRET_KEY: ci-test-secret
+  JWT_ALGORITHM: HS256
+  PROCESSING_SERVICE_TOKEN: change_me_internal_token
+  PROCESSING_BASE_URL: http://127.0.0.1:8001
+  PROCESSING_TEST_URL: http://127.0.0.1:8001
+  PROCESSING_TIMEOUT_SECONDS: 5
+  DATABASE_URL: postgresql+asyncpg://postgres:root@127.0.0.1:5432/jobs_db
+  REDIS_URL: redis://127.0.0.1:6379/0
+
+jobs:
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r gateway_service/requirements.txt
+          pip install -r processing_service/requirements.txt
+          pip install ruff
+
+      - name: Run Ruff
+        run: |
+          ruff check gateway_service processing_service
+        continue-on-error: true
+
+
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Gateway dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r gateway_service/requirements.txt
+
+      - name: Install Processing dependencies
+        run: |
+          pip install -r processing_service/requirements.txt
+          pip install pytest pytest-asyncio python-dotenv
+
+      - name: Start PostgreSQL and Redis
+        run: |
+          docker compose up -d postgres redis
+
+      - name: Wait for PostgreSQL
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T postgres pg_isready -U postgres -d jobs_db; then
+              echo "PostgreSQL is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Wait for Redis
+        run: |
+          for i in {1..30}; do
+            if docker compose exec -T redis redis-cli ping | grep -q PONG; then
+              echo "Redis is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run database migrations
+        run: |
+          docker compose run --rm --no-deps processing-service alembic upgrade head
+
+      - name: Start application services
+        run: |
+          docker compose up -d processing-service worker gateway-service
+
+      - name: Wait for Processing Service
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://127.0.0.1:8001/health; then
+              echo "Processing Service is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Wait for Gateway Service
+        run: |
+          for i in {1..30}; do
+            if curl -fs http://127.0.0.1:8000/health; then
+              echo "Gateway Service is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run Processing Service tests
+        working-directory: processing_service
+        run: |
+          pytest -q tests/test_day8_processing.py
+
+      - name: Run Gateway integration tests
+        working-directory: gateway_service
+        run: |
+          pytest -q tests/test_day8_integration.py
+
+      - name: Show Docker logs on failure
+        if: failure()
+        run: |
+          docker compose ps
+          docker compose logs --no-color
+
+      - name: Stop services
+        if: always()
+        run: |
+          docker compose down -v
+
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: |
+          docker compose build
