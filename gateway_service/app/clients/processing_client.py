@@ -1,8 +1,11 @@
 from uuid import UUID
 
 import httpx
+
 from fastapi import HTTPException
+
 from app.core.config import settings
+
 
 class ProcessingClient:
 
@@ -20,21 +23,21 @@ class ProcessingClient:
         self,
         name: str,
         data: dict,
-        correlation_id: str
+        correlation_id: str,
+        idempotency_key: str,
     ):
-
         url = f"{self.base_url}/internal/v1/jobs"
 
         headers = {
             "Authorization": f"Bearer {self.service_token}",
-            "X-Correlation-ID": correlation_id
+            "X-Correlation-ID": correlation_id,
+            "Idempotency-Key": idempotency_key,
         }
 
         try:
             async with httpx.AsyncClient(
                 timeout=self.timeout
             ) as client:
-
                 response = await client.post(
                     url,
                     json={
@@ -45,7 +48,6 @@ class ProcessingClient:
                 )
 
         except httpx.TimeoutException:
-
             raise HTTPException(
                 status_code=504,
                 detail={
@@ -55,7 +57,6 @@ class ProcessingClient:
             )
 
         except httpx.ConnectError:
-
             raise HTTPException(
                 status_code=503,
                 detail={
@@ -65,7 +66,6 @@ class ProcessingClient:
             )
 
         if response.status_code == 401:
-
             raise HTTPException(
                 status_code=401,
                 detail={
@@ -75,7 +75,6 @@ class ProcessingClient:
             )
 
         if response.status_code == 404:
-
             raise HTTPException(
                 status_code=404,
                 detail={
@@ -84,8 +83,16 @@ class ProcessingClient:
                 }
             )
 
-        if response.status_code >= 500:
+        if response.status_code == 409:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "IDEMPOTENCY_CONFLICT",
+                    "message": "Idempotency key was already used with a different request"
+                }
+            )
 
+        if response.status_code >= 500:
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -98,70 +105,72 @@ class ProcessingClient:
 
         return response.json()
 
-
     async def get_job(
         self,
         job_id: UUID,
         correlation_id: str | None = None,
     ):
         headers = {
-            "Authorization": f"Bearer {settings.processing_service_token}"
+            "Authorization": f"Bearer {self.service_token}"
         }
 
         if correlation_id:
             headers["X-Correlation-ID"] = correlation_id
 
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout) as client:
-                    response = await client.get(
-                        f"{self.base_url}/internal/v1/jobs/{job_id}",
-                        headers=headers,
-                    )
-
-                if response.status_code == 401:
-                    raise HTTPException(
-                        status_code=401,
-                        detail={
-                            "code": "PROCESSING_SERVICE_UNAUTHORIZED",
-                            "message": "Processing service rejected the internal token"
-                        },
-                    )
-
-                if response.status_code == 404:
-                    raise HTTPException(
-                        status_code=404,
-                        detail={
-                            "code": "JOB_NOT_FOUND",
-                            "message": "Job not found"
-                        },
-                    )
-
-                if response.status_code >= 500:
-                    raise HTTPException(
-                        status_code=502,
-                        detail={
-                            "code": "PROCESSING_SERVICE_ERROR",
-                            "message": "Processing service returned an error"
-                        },
-                    )
-
-                response.raise_for_status()
-                return response.json()
-
-            except httpx.TimeoutException:
-                raise HTTPException(
-                    status_code=504,
-                    detail={
-                        "code": "PROCESSING_SERVICE_TIMEOUT",
-                        "message": "Processing service timed out"
-                    },
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout
+            ) as client:
+                response = await client.get(
+                    f"{self.base_url}/internal/v1/jobs/{job_id}",
+                    headers=headers,
                 )
 
-            except httpx.ConnectError:
-                raise HTTPException(
-                    status_code=503,
-                    detail={
-                        "code": "PROCESSING_SERVICE_UNAVAILABLE",
-                        "message": "Processing service is unavailable"
-                    },
-                )
+        except httpx.TimeoutException:
+            raise HTTPException(
+                status_code=504,
+                detail={
+                    "code": "PROCESSING_SERVICE_TIMEOUT",
+                    "message": "Processing service timed out"
+                },
+            )
+
+        except httpx.ConnectError:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "PROCESSING_SERVICE_UNAVAILABLE",
+                    "message": "Processing service is unavailable"
+                },
+            )
+
+        if response.status_code == 401:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "PROCESSING_SERVICE_UNAUTHORIZED",
+                    "message": "Processing service rejected the internal token"
+                },
+            )
+
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "JOB_NOT_FOUND",
+                    "message": "Job not found"
+                },
+            )
+
+        if response.status_code >= 500:
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "code": "PROCESSING_SERVICE_ERROR",
+                    "message": "Processing service returned an error"
+                },
+            )
+
+        response.raise_for_status()
+
+        return response.json()

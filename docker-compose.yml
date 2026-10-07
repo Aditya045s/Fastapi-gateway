@@ -66,6 +66,8 @@ services:
       PROCESSING_BASE_URL: http://processing-service:8001
       PROCESSING_TIMEOUT_SECONDS: 5
       PROCESSING_SERVICE_TOKEN: change_me_internal_token
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
     ports:
       - "8000:8000"
     depends_on:

@@ -17,6 +17,8 @@ class WorkerSettings:
         process_job,
     ]
 
+    max_tries = 3
+
     redis_settings = RedisSettings(
         host="redis",
         port=6379,
