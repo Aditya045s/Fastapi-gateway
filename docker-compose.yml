@@ -1,0 +1,75 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: jobs-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: jobs_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d jobs_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: jobs-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  processing-service:
+    build:
+      context: ./processing_service
+      dockerfile: Dockerfile
+    container_name: processing-service
+    environment:
+      PROCESSING_SERVICE_TOKEN: change_me_internal_token
+      DATABASE_URL: postgresql+asyncpg://postgres:root@postgres:5432/jobs_db
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./processing_service
+      dockerfile: Dockerfile
+    container_name: processing-worker
+    environment:
+      PROCESSING_SERVICE_TOKEN: change_me_internal_token
+      DATABASE_URL: postgresql+asyncpg://postgres:root@postgres:5432/jobs_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["arq", "app.workers.worker.WorkerSettings"]
+
+  gateway-service:
+    build:
+      context: ./gateway_service
+      dockerfile: Dockerfile
+    container_name: gateway-service
+    environment:
+      PROCESSING_BASE_URL: http://processing-service:8001
+      PROCESSING_TIMEOUT_SECONDS: 5
+      PROCESSING_SERVICE_TOKEN: change_me_internal_token
+    ports:
+      - "8000:8000"
+    depends_on:
+      - processing-service
+
+volumes:
+  postgres_data:

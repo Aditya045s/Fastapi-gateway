@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.db.database import async_session
+from app.db.database import AsyncSessionLocal
 from app.models.job import Job
 
 
@@ -10,7 +10,7 @@ async def process_job(ctx, job_id: str):
     Background job executed by the ARQ worker.
     """
 
-    async with async_session() as session:
+    async with AsyncSessionLocal() as session:
         # 1. Find the job
         result = await session.execute(
             select(Job).where(Job.id == job_id)

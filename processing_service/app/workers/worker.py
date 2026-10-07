@@ -1,15 +1,7 @@
-from arq import Worker
 
-from app.core.config import settings
+from arq.connections import RedisSettings # type: ignore
+
 from app.workers.tasks import process_job
-
-
-class WorkerSettings:
-    functions = [
-        process_job,
-    ]
-
-    redis_settings = settings.REDIS_URL
 
 
 async def startup(ctx):
@@ -18,3 +10,18 @@ async def startup(ctx):
 
 async def shutdown(ctx):
     print("ARQ worker stopped")
+
+
+class WorkerSettings:
+    functions = [
+        process_job,
+    ]
+
+    redis_settings = RedisSettings(
+        host="redis",
+        port=6379,
+        database=0,
+    )
+
+    on_startup = startup
+    on_shutdown = shutdown
