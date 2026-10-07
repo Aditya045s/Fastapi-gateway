@@ -32,11 +32,12 @@ async def create_job(
         ...,
         alias="Idempotency-Key",
     ),
-):
+ ):
     result = await processing_client.create_job(
         name=job.name,
         data=job.data,
         correlation_id=request.state.correlation_id,
+        request_id=request.state.request_id,
         idempotency_key=idempotency_key,
     )
 
@@ -57,4 +58,5 @@ async def get_job(
     return await processing_client.get_job(
         job_id=job_id,
         correlation_id=correlation_id,
+        request_id=request.state.request_id,
     )
