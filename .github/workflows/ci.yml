@@ -46,7 +46,10 @@ jobs:
       - name: Run Ruff
         run: |
           ruff check gateway_service processing_service
-        continue-on-error: true
+        
+      - name: Check formatting
+        run: |
+          ruff format --check gateway_service processing_service
 
 
   integration-tests:
